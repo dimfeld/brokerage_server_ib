@@ -2,6 +2,7 @@ package brokerage_server_ib
 
 import (
 	"sync"
+	"time"
 
 	"github.com/nothize/ib"
 
@@ -17,11 +18,12 @@ type IB struct {
 
 	doneChan chan struct{}
 
-	pending      map[int64]*pendingReply
+	pending      map[int64]pendingReply
 	pendingMutex *sync.Mutex
 
 	// Debug logging level
-	Debug int
+	Debug   int
+	Timeout time.Duration
 }
 
 func (p *IB) connect() (err error) {
@@ -100,7 +102,7 @@ func New(config map[string]interface{}) (*IB, error) {
 	return &IB{
 		engineOptions: options,
 		Debug:         debug,
-		pending:       map[int64]*pendingReply{},
+		pending:       map[int64]pendingReply{},
 		pendingMutex:  &sync.Mutex{},
 	}, nil
 }

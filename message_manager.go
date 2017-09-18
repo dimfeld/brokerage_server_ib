@@ -1,22 +1,24 @@
 package brokerage_server_ib
 
-import "github.com/nothize/ib"
+import (
+	"context"
+
+	"github.com/nothize/ib"
+)
 
 type replyBehavior int
 
+type pendingReply struct {
+	dataChan chan ib.Reply
+	ctx      context.Context
+}
+
 const (
-	REPLY_SEND_AND_CLOSE replyBehavior = iota
-	REPLY_SEND_AND_CONTINUE
-	REPLY_DROP_AND_CLOSE
-	REPLY_DROP_AND_CONTINUE
+	REPLY_CONTINUE replyBehavior = iota
+	REPLY_DONE
 )
 
-type replyBehaviorFunc func(r ib.Reply) replyBehavior
-
-type pendingReply struct {
-	ch       chan<- ib.Reply
-	behavior replyBehaviorFunc
-}
+type callbackFunc func(r ib.Reply) (replyBehavior, error)
 
 func (p *IB) handleReply(rep ib.Reply) {
 	if idReply, ok := rep.(ib.MatchedReply); ok {
@@ -32,53 +34,46 @@ func (p *IB) handleReply(rep ib.Reply) {
 			return
 		}
 
-		// If there's no behavior function, then assume there's just one message.
-		behavior := REPLY_SEND_AND_CLOSE
-		if reply.behavior != nil {
-			behavior = reply.behavior(rep)
-		}
-
-		switch behavior {
-		case REPLY_SEND_AND_CLOSE:
-			// All done, and the client should receive this message.
-			reply.ch <- rep
-			close(reply.ch)
-
-			p.pendingMutex.Lock()
-			delete(p.pending, id)
-			p.pendingMutex.Unlock()
-		case REPLY_SEND_AND_CONTINUE:
-			// Pass the message along, and leave the pipe open for future messages.
-			reply.ch <- rep
-		case REPLY_DROP_AND_CLOSE:
-			// We don't need to send this message, but it does indicate that the reply is done.
-			close(reply.ch)
-			p.pendingMutex.Lock()
-			delete(p.pending, id)
-			p.pendingMutex.Unlock()
-		case REPLY_DROP_AND_CONTINUE:
-			// Don't need to pass this message along, bbut we're not at the end. Just continue on.
+		select {
+		case reply.dataChan <- rep:
+		case <-reply.ctx.Done():
 		}
 	}
 
 	// TODO Handle unmatched replies.
 }
 
-func (p *IB) sendRequest(r ib.MatchedRequest, behavior replyBehaviorFunc) (chan<- ib.Reply, error) {
+func (p *IB) sendRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFunc) error {
 	nextId := p.engine.NextRequestID()
 	r.SetID(nextId)
-	if err := p.engine.Send(r); err != nil {
-		return nil, nil
-	}
 
-	data := &pendingReply{
-		ch:       make(chan<- ib.Reply, 1),
-		behavior: behavior,
-	}
-
+	dataChan := make(chan ib.Reply)
 	p.pendingMutex.Lock()
-	p.pending[nextId] = data
+	p.pending[nextId] = pendingReply{
+		dataChan: dataChan,
+		ctx:      ctx,
+	}
 	p.pendingMutex.Unlock()
 
-	return data.ch, nil
+	defer func() {
+		p.pendingMutex.Lock()
+		delete(p.pending, nextId)
+		p.pendingMutex.Unlock()
+	}()
+
+	if err := p.engine.Send(r); err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case data := <-dataChan:
+			behavior, err := cb(data)
+			if err != nil || behavior == REPLY_DONE {
+				return err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }

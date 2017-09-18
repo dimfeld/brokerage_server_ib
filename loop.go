@@ -5,11 +5,9 @@ import "github.com/nothize/ib"
 func (p *IB) runEventLoop() chan struct{} {
 	stateChan := make(chan ib.EngineState)
 	replyChan := make(chan ib.Reply)
-
 	doneChan := make(chan struct{})
 
 	go func() {
-
 		for {
 			select {
 			case state := <-stateChan:
