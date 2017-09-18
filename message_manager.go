@@ -47,6 +47,8 @@ func (p *IB) sendRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFu
 	nextId := p.engine.NextRequestID()
 	r.SetID(nextId)
 
+	ctx, cancelFunc := context.WithCancel(ctx)
+
 	dataChan := make(chan ib.Reply)
 	p.pendingMutex.Lock()
 	p.pending[nextId] = pendingReply{
@@ -56,6 +58,7 @@ func (p *IB) sendRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFu
 	p.pendingMutex.Unlock()
 
 	defer func() {
+		cancelFunc()
 		p.pendingMutex.Lock()
 		delete(p.pending, nextId)
 		p.pendingMutex.Unlock()
