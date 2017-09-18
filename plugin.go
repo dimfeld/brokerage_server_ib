@@ -1,6 +1,8 @@
 package brokerage_server_ib
 
 import (
+	"sync"
+
 	"github.com/nothize/ib"
 
 	"github.com/dimfeld/brokerage_server/types"
@@ -13,6 +15,11 @@ type IB struct {
 	engineOptions ib.EngineOptions
 	open          bool
 
+	doneChan chan struct{}
+
+	pending      map[int64]*pendingReply
+	pendingMutex *sync.Mutex
+
 	// Debug logging level
 	Debug int
 }
@@ -22,6 +29,12 @@ func (p *IB) connect() (err error) {
 		p.engine = nil
 		return err
 	}
+
+	if p.doneChan != nil {
+		close(p.doneChan)
+	}
+
+	p.doneChan = p.runEventLoop()
 
 	p.open = true
 	return nil
@@ -39,8 +52,16 @@ func (p *IB) Connect() (err error) {
 
 func (p *IB) Close() error {
 	p.open = false
-	p.engine.Stop()
-	p.engine = nil
+
+	if p.engine != nil {
+		p.engine.Stop()
+		p.engine = nil
+	}
+
+	if p.doneChan != nil {
+		close(p.doneChan)
+	}
+
 	return nil
 }
 
@@ -79,5 +100,7 @@ func New(config map[string]interface{}) (*IB, error) {
 	return &IB{
 		engineOptions: options,
 		Debug:         debug,
+		pending:       map[int64]*pendingReply{},
+		pendingMutex:  &sync.Mutex{},
 	}, nil
 }
