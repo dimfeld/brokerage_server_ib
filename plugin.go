@@ -1,6 +1,7 @@
 package brokerage_server_ib
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -16,7 +17,10 @@ type IB struct {
 	engineOptions ib.EngineOptions
 	open          bool
 
-	doneChan chan struct{}
+	nextOrderIdValue int64
+
+	doneChan    chan struct{}
+	connectChan chan error
 
 	pending      map[int64]pendingReply
 	pendingMutex *sync.Mutex
@@ -36,10 +40,18 @@ func (p *IB) connect() (err error) {
 		close(p.doneChan)
 	}
 
-	p.doneChan = p.runEventLoop()
+	p.runEventLoop()
 
-	p.open = true
-	return nil
+	timeout := time.NewTimer(p.Timeout)
+	select {
+	case <-p.connectChan:
+		if !timeout.Stop() {
+			<-timeout.C
+		}
+		return nil
+	case <-timeout.C:
+		return errors.New("Connection timeout")
+	}
 }
 
 func (p *IB) Connect() (err error) {
@@ -95,6 +107,10 @@ func New(config map[string]interface{}) (*IB, error) {
 
 	if options.Gateway, ok = config["gateway"].(string); !ok {
 		options.Gateway = DEFAULT_GATEWAY
+	}
+
+	if clientId, ok := config["client_id"].(int); ok {
+		options.Client = int64(clientId)
 	}
 
 	debug, _ := config["debug"].(int)

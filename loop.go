@@ -2,10 +2,11 @@ package brokerage_server_ib
 
 import "github.com/nothize/ib"
 
-func (p *IB) runEventLoop() chan struct{} {
+func (p *IB) runEventLoop() {
 	stateChan := make(chan ib.EngineState)
 	replyChan := make(chan ib.Reply)
-	doneChan := make(chan struct{})
+	p.doneChan = make(chan struct{})
+	p.connectChan = make(chan error)
 
 	go func() {
 		for {
@@ -14,14 +15,12 @@ func (p *IB) runEventLoop() chan struct{} {
 				p.handleState(state)
 			case reply := <-replyChan:
 				p.handleReply(reply)
-			case <-doneChan:
+			case <-p.doneChan:
 				// All done.
 				return
 			}
 		}
 	}()
-
-	return doneChan
 }
 
 func (p *IB) handleState(ib.EngineState) {
