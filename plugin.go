@@ -22,8 +22,8 @@ type IB struct {
 	doneChan    chan struct{}
 	connectChan chan error
 
-	pending      map[int64]pendingReply
-	pendingMutex *sync.Mutex
+	active      map[int64]activeReply
+	activeMutex *sync.Mutex
 
 	// Debug logging level
 	Debug   int
@@ -118,7 +118,7 @@ func New(config map[string]interface{}) (*IB, error) {
 	return &IB{
 		engineOptions: options,
 		Debug:         debug,
-		pending:       map[int64]pendingReply{},
-		pendingMutex:  &sync.Mutex{},
+		active:        map[int64]activeReply{},
+		activeMutex:   &sync.Mutex{},
 	}, nil
 }

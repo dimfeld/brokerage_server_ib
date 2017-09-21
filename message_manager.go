@@ -9,7 +9,7 @@ import (
 
 type replyBehavior int
 
-type pendingReply struct {
+type activeReply struct {
 	dataChan chan ib.Reply
 	ctx      context.Context
 }
@@ -34,13 +34,13 @@ func (p *IB) handleReply(rep ib.Reply) {
 	case ib.MatchedReply:
 		id := r.ID()
 
-		p.pendingMutex.Lock()
-		reply, ok := p.pending[id]
-		p.pendingMutex.Unlock()
+		p.activeMutex.Lock()
+		reply, ok := p.active[id]
+		p.activeMutex.Unlock()
 
 		if !ok {
 			// Got an unexpected reply
-			// TODO log something
+			// TODO log something on debug mode. This will actually be a fairly normal occurrence so don't warn on it.
 			return
 		}
 
@@ -57,38 +57,59 @@ func (p *IB) nextOrderID() int64 {
 	return atomic.AddInt64(&p.nextOrderIdValue, 1)
 }
 
-func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (int64, chan ib.Reply, error) {
-	nextId := p.nextOrderID()
-	r.SetID(nextId)
-
-	dataChan := make(chan ib.Reply)
-	p.pendingMutex.Lock()
-	p.pending[nextId] = pendingReply{
-		dataChan: dataChan,
-		ctx:      ctx,
+func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (nextId int64, dataChan chan ib.Reply, err error) {
+	nextId = r.ID()
+	if nextId == 0 {
+		nextId = p.nextOrderID()
+		r.SetID(nextId)
 	}
-	p.pendingMutex.Unlock()
 
-	return nextId, dataChan, p.engine.Send(r)
+	p.activeMutex.Lock()
+	rep, ok := p.active[nextId]
+	if !ok {
+		dataChan = make(chan ib.Reply, 1)
+		p.active[nextId] = activeReply{
+			dataChan: dataChan,
+			ctx:      ctx,
+		}
+	} else {
+		dataChan = rep.dataChan
+	}
+	p.activeMutex.Unlock()
+
+	err = p.engine.Send(r)
+	return
 }
 
 func (p *IB) closeMatchedRequest(id int64) {
-	p.pendingMutex.Lock()
-	delete(p.pending, id)
-	p.pendingMutex.Unlock()
+	p.activeMutex.Lock()
+	rep := p.active[id]
+outer:
+	for {
+		// Drain the channel, if it needs it.
+		select {
+		case <-rep.dataChan:
+		default:
+			break outer
+		}
+	}
+
+	delete(p.active, id)
+	p.activeMutex.Unlock()
 }
 
-func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (chan ib.Reply, error) {
-	if err := p.engine.Send(r); err != nil {
-		return nil, err
+func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (reqId int64, repChan chan ib.Reply, err error) {
+	if err = p.engine.Send(r); err != nil {
+		return
 	}
 
-	reqId, dataChan, err := p.sendMatchedRequest(ctx, r)
+	var dataChan chan ib.Reply
+	reqId, dataChan, err = p.sendMatchedRequest(ctx, r)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	repChan := make(chan ib.Reply, 20)
+	repChan = make(chan ib.Reply, 20)
 
 	go func() {
 		for {
@@ -104,7 +125,7 @@ func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (ch
 		}
 	}()
 
-	return repChan, nil
+	return
 }
 
 func (p *IB) sendUnmatchedRequest(ctx context.Context, r ib.Request) error {
