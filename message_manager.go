@@ -2,6 +2,7 @@ package brokerage_server_ib
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 
 	"github.com/nothize/ib"
@@ -21,6 +22,26 @@ const (
 
 type callbackFunc func(r ib.Reply) (replyBehavior, error)
 
+func (p *IB) handleMatchedReply(r ib.MatchedReply) {
+	id := r.ID()
+
+	p.activeMutex.Lock()
+	reply, ok := p.active[id]
+	p.activeMutex.Unlock()
+
+	if !ok {
+		// Got an unexpected reply
+		// This will actually be a fairly normal occurrence so don't warn on it.
+		p.LogDebugVerbose("Unexpected reply", "msg", r)
+		return
+	}
+
+	select {
+	case reply.dataChan <- r:
+	case <-reply.ctx.Done():
+	}
+}
+
 func (p *IB) handleReply(rep ib.Reply) {
 	p.LogDebugTrace("received", "msg", rep)
 
@@ -33,24 +54,21 @@ func (p *IB) handleReply(rep ib.Reply) {
 			p.connectChan = nil
 		}
 
-	case ib.MatchedReply:
+	case *ib.ErrorMessage:
 		id := r.ID()
 
-		p.activeMutex.Lock()
-		reply, ok := p.active[id]
-		p.activeMutex.Unlock()
+		p.Logger.Error("received error", "err", r)
 
-		if !ok {
-			// Got an unexpected reply
-			// This will actually be a fairly normal occurrence so don't warn on it.
-			p.LogDebugVerbose("Unexpected reply", "msg", rep)
-			return
-		}
+		// TODO Some errors are not actually replies to the
+		// request, and should be handled here instead of passed
+		// through.
 
-		select {
-		case reply.dataChan <- rep:
-		case <-reply.ctx.Done():
-		}
+		p.handleMatchedReply(r)
+		// Make sure the request gets closed, since nothing else is coming in.
+		p.closeMatchedRequest(id)
+
+	case ib.MatchedReply:
+		p.handleMatchedReply(r)
 	}
 
 	// TODO Handle unmatched replies.
@@ -86,18 +104,20 @@ func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (nextI
 
 func (p *IB) closeMatchedRequest(id int64) {
 	p.activeMutex.Lock()
-	rep := p.active[id]
-outer:
-	for {
-		// Drain the channel, if it needs it.
-		select {
-		case <-rep.dataChan:
-		default:
-			break outer
+	rep, ok := p.active[id]
+	if ok {
+	outer:
+		for {
+			// Drain the channel, if it needs it.
+			select {
+			case <-rep.dataChan:
+			default:
+				break outer
+			}
 		}
-	}
 
-	delete(p.active, id)
+		delete(p.active, id)
+	}
 	p.activeMutex.Unlock()
 }
 
@@ -131,7 +151,7 @@ func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (re
 	return
 }
 
-func (p *IB) sendUnmatchedRequest(ctx context.Context, r ib.Request) error {
+func (p *IB) sendUnmatchedRequest(r ib.Request) error {
 	return p.engine.Send(r)
 }
 
@@ -151,6 +171,11 @@ func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb cal
 	for {
 		select {
 		case data := <-dataChan:
+			if data == nil {
+				// TODO Better error handling
+				return errors.New("error occurred")
+			}
+
 			behavior, err := cb(data)
 			if err != nil || behavior == REPLY_DONE {
 				return err

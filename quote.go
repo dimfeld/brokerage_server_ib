@@ -6,11 +6,8 @@ import (
 	"time"
 
 	"github.com/dimfeld/brokerage_server/types"
-	log "github.com/inconshreveable/log15"
 	"github.com/nothize/ib"
 )
-
-var logger = log.New("mod", "ib")
 
 func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
 	const quoteFieldCount = 16
@@ -119,7 +116,7 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 		case *ib.TickSnapshotEnd:
 			// We should usually finish before receiving this, but handle
 			// it just in case.
-			logger.Debug("quote exited early", "seen", seen)
+			p.LogDebugNormal("quote exited early", "seen", seen)
 			return REPLY_DONE, nil
 		}
 

@@ -78,6 +78,21 @@ func (p *IB) connect() (err error) {
 	case <-timeout.C:
 		return errors.New("Connection timeout")
 	}
+
+	return p.sendInitialSetup()
+}
+
+func (p *IB) sendInitialSetup() error {
+	// Enable frozen data mode so that we can still get data after hours.
+	// This still sends up-to-date real-time data during trading hours.
+	dataTypeReq := &ib.RequestMarketDataType{
+		MarketDataType: ib.MarketDataTypeFrozen,
+	}
+	if err := p.sendUnmatchedRequest(dataTypeReq); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (p *IB) Connect() (err error) {
@@ -139,7 +154,7 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 
 	return &IB{
 		engineOptions: options,
-		Debug:         jsoniter.Get(config, "debug").ToInt(),
+		Debug:         types.DebugLevel(jsoniter.Get(config, "debug").ToInt()),
 		active:        map[int64]activeReply{},
 		activeMutex:   &sync.Mutex{},
 		Logger:        logger.New("plugin", "ib"),
