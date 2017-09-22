@@ -14,12 +14,6 @@ import (
 )
 
 const DEFAULT_GATEWAY = "localhost:7497"
-const (
-	DEBUG_OFF     = 0
-	DEBUG_NORMAL  = 1
-	DEBUG_VERBOSE = 2
-	DEBUG_TRACE   = 3
-)
 
 type IB struct {
 	engine        *ib.Engine
@@ -35,27 +29,31 @@ type IB struct {
 	activeMutex *sync.Mutex
 
 	// Debug logging level
-	Debug   int
+	Debug   types.DebugLevel
 	Timeout time.Duration
 	Logger  log15.Logger
 }
 
 func (p *IB) LogDebugNormal(msg string, args ...interface{}) {
-	if p.Debug >= DEBUG_NORMAL {
+	if p.Debug >= types.DEBUG_NORMAL {
 		p.Logger.Debug(msg, args...)
 	}
 }
 
 func (p *IB) LogDebugVerbose(msg string, args ...interface{}) {
-	if p.Debug >= DEBUG_VERBOSE {
+	if p.Debug >= types.DEBUG_VERBOSE {
 		p.Logger.Debug(msg, args...)
 	}
 }
 
 func (p *IB) LogDebugTrace(msg string, args ...interface{}) {
-	if p.Debug >= DEBUG_TRACE {
+	if p.Debug >= types.DEBUG_TRACE {
 		p.Logger.Debug(msg, args...)
 	}
+}
+
+func (p *IB) SetDebugLevel(level types.DebugLevel) {
+	p.Debug = level
 }
 
 func (p *IB) connect() (err error) {
