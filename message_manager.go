@@ -132,7 +132,7 @@ func (p *IB) sendUnmatchedRequest(ctx context.Context, r ib.Request) error {
 	return p.engine.Send(r)
 }
 
-func (p *IB) waitForMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFunc) error {
+func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFunc) error {
 	ctx, cancelFunc := context.WithCancel(ctx)
 	reqId, dataChan, err := p.sendMatchedRequest(ctx, r)
 
