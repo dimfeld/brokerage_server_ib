@@ -22,6 +22,8 @@ const (
 type callbackFunc func(r ib.Reply) (replyBehavior, error)
 
 func (p *IB) handleReply(rep ib.Reply) {
+	p.LogDebugTrace("received", "msg", rep)
+
 	switch r := rep.(type) {
 	case *ib.NextValidID:
 		atomic.StoreInt64(&p.nextOrderIdValue, r.OrderID)
@@ -40,7 +42,8 @@ func (p *IB) handleReply(rep ib.Reply) {
 
 		if !ok {
 			// Got an unexpected reply
-			// TODO log something on debug mode. This will actually be a fairly normal occurrence so don't warn on it.
+			// This will actually be a fairly normal occurrence so don't warn on it.
+			p.LogDebugVerbose("Unexpected reply", "msg", rep)
 			return
 		}
 

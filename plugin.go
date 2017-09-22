@@ -1,16 +1,25 @@
 package brokerage_server_ib
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
 
+	"github.com/inconshreveable/log15"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/nothize/ib"
 
 	"github.com/dimfeld/brokerage_server/types"
 )
 
 const DEFAULT_GATEWAY = "localhost:7497"
+const (
+	DEBUG_OFF     = 0
+	DEBUG_NORMAL  = 1
+	DEBUG_VERBOSE = 2
+	DEBUG_TRACE   = 3
+)
 
 type IB struct {
 	engine        *ib.Engine
@@ -28,6 +37,25 @@ type IB struct {
 	// Debug logging level
 	Debug   int
 	Timeout time.Duration
+	Logger  log15.Logger
+}
+
+func (p *IB) LogDebugNormal(msg string, args ...interface{}) {
+	if p.Debug >= DEBUG_NORMAL {
+		p.Logger.Debug(msg, args...)
+	}
+}
+
+func (p *IB) LogDebugVerbose(msg string, args ...interface{}) {
+	if p.Debug >= DEBUG_VERBOSE {
+		p.Logger.Debug(msg, args...)
+	}
+}
+
+func (p *IB) LogDebugTrace(msg string, args ...interface{}) {
+	if p.Debug >= DEBUG_TRACE {
+		p.Logger.Debug(msg, args...)
+	}
 }
 
 func (p *IB) connect() (err error) {
@@ -101,24 +129,21 @@ func (p *IB) Error() error {
 	return nil
 }
 
-func New(config map[string]interface{}) (*IB, error) {
-	options := ib.EngineOptions{}
-	var ok bool
+func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
+	options := ib.EngineOptions{
+		Client:  jsoniter.Get(config, "client_id").ToInt64(),
+		Gateway: jsoniter.Get(config, "gateway").ToString(),
+	}
 
-	if options.Gateway, ok = config["gateway"].(string); !ok {
+	if options.Gateway == "" {
 		options.Gateway = DEFAULT_GATEWAY
 	}
 
-	if clientId, ok := config["client_id"].(int); ok {
-		options.Client = int64(clientId)
-	}
-
-	debug, _ := config["debug"].(int)
-
 	return &IB{
 		engineOptions: options,
-		Debug:         debug,
+		Debug:         jsoniter.Get(config, "debug").ToInt(),
 		active:        map[int64]activeReply{},
 		activeMutex:   &sync.Mutex{},
+		Logger:        logger.New("plugin", "ib"),
 	}, nil
 }
