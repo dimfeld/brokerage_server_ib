@@ -10,7 +10,7 @@ import (
 )
 
 func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
-	const quoteFieldCount = 16
+	const quoteFieldCount = 12
 
 	req := &ib.RequestMarketData{
 		Contract: ib.Contract{
@@ -55,8 +55,8 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 				output.Last = tick.Price
 				output.LastSize = tick.Size
 				seen[ib.TickLastSize] = true
-			case ib.TickMarkPrice:
-				output.Mark = tick.Price
+			// case ib.TickMarkPrice:
+			// 	output.Mark = tick.Price
 			case ib.TickHigh:
 				output.High = tick.Price
 			case ib.TickLow:
@@ -95,12 +95,12 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 		case *ib.TickString:
 			usedValue := true
 			switch tick.Type {
-			case ib.TickAskExch:
-				output.AskExch = tick.Value
-			case ib.TickBidExch:
-				output.BidExch = tick.Value
-			case ib.TickLastExchange:
-				output.LastExch = tick.Value
+			// case ib.TickAskExch:
+			// 	output.AskExch = tick.Value
+			// case ib.TickBidExch:
+			// 	output.BidExch = tick.Value
+			// case ib.TickLastExchange:
+			// 	output.LastExch = tick.Value
 			case ib.TickLastTimestamp:
 				if t, err := strconv.ParseInt(tick.Value, 10, 64); err == nil {
 					output.LastTime = time.Unix(int64(t), 0)
@@ -120,7 +120,7 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 			return REPLY_DONE, nil
 		}
 
-		if len(seen) == quoteFieldCount {
+		if len(seen) >= quoteFieldCount {
 			return REPLY_DONE, nil
 		}
 

@@ -21,6 +21,9 @@ func (p *IB) runEventLoop() {
 			}
 		}
 	}()
+
+	p.engine.SubscribeAll(replyChan)
+	p.engine.SubscribeState(stateChan)
 }
 
 func (p *IB) handleState(ib.EngineState) {

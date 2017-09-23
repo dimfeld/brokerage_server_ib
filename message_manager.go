@@ -46,7 +46,11 @@ func (p *IB) handleReply(rep ib.Reply) {
 	p.LogDebugTrace("received", "msg", rep)
 
 	switch r := rep.(type) {
+	case *ib.ManagedAccounts:
+		// TODO Save list of accounts
+
 	case *ib.NextValidID:
+		p.LogDebugTrace("NextValidID", "id", r.OrderID)
 		atomic.StoreInt64(&p.nextOrderIdValue, r.OrderID)
 		p.open = true
 		if p.connectChan != nil {
@@ -57,15 +61,21 @@ func (p *IB) handleReply(rep ib.Reply) {
 	case *ib.ErrorMessage:
 		id := r.ID()
 
-		p.Logger.Error("received error", "err", r)
+		if r.SeverityWarning() {
+			p.Logger.Warn("info", "err", r)
+		} else {
+			p.Logger.Error("received error", "err", r)
+		}
 
 		// TODO Some errors are not actually replies to the
 		// request, and should be handled here instead of passed
 		// through.
 
-		p.handleMatchedReply(r)
-		// Make sure the request gets closed, since nothing else is coming in.
-		p.closeMatchedRequest(id)
+		if id != -1 {
+			p.handleMatchedReply(r)
+			// Make sure the request gets closed, since nothing else is coming in.
+			p.closeMatchedRequest(id)
+		}
 
 	case ib.MatchedReply:
 		p.handleMatchedReply(r)
@@ -76,6 +86,11 @@ func (p *IB) handleReply(rep ib.Reply) {
 
 func (p *IB) nextOrderID() int64 {
 	return atomic.AddInt64(&p.nextOrderIdValue, 1)
+}
+
+func (p *IB) send(r ib.Request) error {
+	p.LogDebugTrace("Sending", "msg", r)
+	return p.engine.Send(r)
 }
 
 func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (nextId int64, dataChan chan ib.Reply, err error) {
@@ -98,7 +113,7 @@ func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (nextI
 	}
 	p.activeMutex.Unlock()
 
-	err = p.engine.Send(r)
+	err = p.send(r)
 	return
 }
 
@@ -122,7 +137,7 @@ func (p *IB) closeMatchedRequest(id int64) {
 }
 
 func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (reqId int64, repChan chan ib.Reply, err error) {
-	if err = p.engine.Send(r); err != nil {
+	if err = p.send(r); err != nil {
 		return
 	}
 
@@ -152,7 +167,7 @@ func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (re
 }
 
 func (p *IB) sendUnmatchedRequest(r ib.Request) error {
-	return p.engine.Send(r)
+	return p.send(r)
 }
 
 func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFunc) error {

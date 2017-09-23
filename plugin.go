@@ -3,6 +3,8 @@ package brokerage_server_ib
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,14 +59,16 @@ func (p *IB) SetDebugLevel(level types.DebugLevel) {
 }
 
 func (p *IB) connect() (err error) {
+	p.LogDebugNormal("Connecting")
 	if p.engine, err = ib.NewEngine(p.engineOptions); err != nil {
 		p.engine = nil
+		if strings.HasSuffix(err.Error(), "connection refused") {
+			err = fmt.Errorf("%s. Are you running TWS?", err.Error())
+		}
 		return err
 	}
 
-	if p.doneChan != nil {
-		close(p.doneChan)
-	}
+	p.LogDebugVerbose("Created engine")
 
 	p.runEventLoop()
 
@@ -74,7 +78,6 @@ func (p *IB) connect() (err error) {
 		if !timeout.Stop() {
 			<-timeout.C
 		}
-		return nil
 	case <-timeout.C:
 		return errors.New("Connection timeout")
 	}
@@ -152,11 +155,17 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 		options.Gateway = DEFAULT_GATEWAY
 	}
 
+	timeout := jsoniter.Get(config, "timeout").ToInt()
+	if timeout == 0 {
+		timeout = 5000
+	}
+
 	return &IB{
 		engineOptions: options,
 		Debug:         types.DebugLevel(jsoniter.Get(config, "debug").ToInt()),
 		active:        map[int64]activeReply{},
 		activeMutex:   &sync.Mutex{},
 		Logger:        logger.New("plugin", "ib"),
+		Timeout:       time.Duration(timeout) * time.Millisecond,
 	}, nil
 }
