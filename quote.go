@@ -27,8 +27,6 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 	}
 	seen := map[int64]bool{}
 
-	var outputError error
-
 	err := p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
 		switch tick := r.(type) {
 		// case *ib.TickGeneric:
@@ -122,8 +120,11 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 			return REPLY_DONE, nil
 
 		case *ib.ErrorMessage:
-			outputError = tick.Error()
-			return REPLY_DONE, nil
+			if tick.Code == IBErrSymbolNotFound {
+				return REPLY_DONE, types.ErrSymbolNotFound
+			} else {
+				return REPLY_DONE, tick.Error()
+			}
 		}
 
 		if len(seen) >= quoteFieldCount {
@@ -133,9 +134,5 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 		return REPLY_CONTINUE, nil
 	})
 
-	if err != nil {
-		return output, err
-	}
-
-	return output, outputError
+	return output, err
 }
