@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimfeld/ib"
 	"github.com/inconshreveable/log15"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/nothize/ib"
 
 	"github.com/dimfeld/brokerage_server/types"
 )
@@ -23,6 +23,8 @@ type IB struct {
 	open          bool
 
 	nextOrderIdValue int64
+
+	contractManager *contractManager
 
 	doneChan    chan struct{}
 	connectChan chan error
@@ -67,6 +69,8 @@ func (p *IB) connect() (err error) {
 		}
 		return err
 	}
+
+	p.contractManager = newContractManager(p.engine)
 
 	p.LogDebugVerbose("Created engine")
 
@@ -160,9 +164,14 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 		timeout = 5000
 	}
 
+	debug := types.DebugLevel(jsoniter.Get(config, "debug").ToInt())
+	if debug > 3 {
+		options.DumpConversation = true
+	}
+
 	return &IB{
 		engineOptions: options,
-		Debug:         types.DebugLevel(jsoniter.Get(config, "debug").ToInt()),
+		Debug:         debug,
 		active:        map[int64]activeReply{},
 		activeMutex:   &sync.Mutex{},
 		Logger:        logger.New("plugin", "ib"),

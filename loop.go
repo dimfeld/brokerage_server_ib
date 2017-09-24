@@ -1,6 +1,6 @@
 package brokerage_server_ib
 
-import "github.com/nothize/ib"
+import "github.com/dimfeld/ib"
 
 func (p *IB) runEventLoop() {
 	stateChan := make(chan ib.EngineState)

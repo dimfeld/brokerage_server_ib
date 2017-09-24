@@ -3,9 +3,11 @@ package brokerage_server_ib
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 
-	"github.com/nothize/ib"
+	"github.com/dimfeld/brokerage_server/types"
+	"github.com/dimfeld/ib"
 )
 
 type replyBehavior int
@@ -90,7 +92,11 @@ func (p *IB) nextOrderID() int64 {
 
 func (p *IB) send(r ib.Request) error {
 	p.LogDebugTrace("Sending", "msg", r)
-	return p.engine.Send(r)
+	err := p.engine.Send(r)
+	if err == io.EOF {
+		err = types.ErrDisconnected
+	}
+	return err
 }
 
 func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (nextId int64, dataChan chan ib.Reply, err error) {

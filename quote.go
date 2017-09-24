@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dimfeld/brokerage_server/types"
-	"github.com/nothize/ib"
+	"github.com/dimfeld/ib"
 )
 
 func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
