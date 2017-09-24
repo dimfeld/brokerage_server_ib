@@ -66,6 +66,8 @@ type contractAndChannel struct {
 }
 
 type contractManager struct {
+	// Currently it holds on to these forever. I don't anticipate a problem here
+	// but in very high usage situations it may become a memory hog.
 	contracts map[ContractKey]contractAndChannel
 
 	mutex   *sync.RWMutex
@@ -92,59 +94,71 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 		pending: doneChan,
 	}
 
+	var existing contractAndChannel
+	var ok bool
 	cm.mutex.Lock()
-	cm.contracts[key] = newData
+	if existing, ok = cm.contracts[key]; !ok {
+		cm.contracts[key] = newData
+	}
 	cm.mutex.Unlock()
+
+	if ok {
+		// This contract was already entered by another before we got here, so defer to that one.
+		close(doneChan)
+		return existing.pending
+	}
 
 	var addedKeys []ContractKey
 
-	err := cm.engine.syncMatchedRequest(ctx, &request, func(mr ib.Reply) (replyBehavior, error) {
-		switch r := mr.(type) {
-		case *ib.ContractData:
-			newKey := NewContractKey(&r.Contract.Summary)
+	go func() {
+		err := cm.engine.syncMatchedRequest(ctx, &request, func(mr ib.Reply) (replyBehavior, error) {
+			switch r := mr.(type) {
+			case *ib.ContractData:
+				newKey := NewContractKey(&r.Contract.Summary)
 
-			if newKey != key {
-				// The two keys are different, so add the data at the original key as well.
-				// This happens when the original contract key is ambiguous such as when fetching
-				// option chains.
-				cm.mutex.Lock()
-				cac := cm.contracts[newKey]
-				cac.details = append(cac.details, r.Contract)
-				cac.pending = doneChan
-				cm.contracts[newKey] = cac
-				cm.mutex.Unlock()
-				addedKeys = append(addedKeys, newKey)
+				if newKey != key {
+					// The two keys are different, so add the data at the original key as well.
+					// This happens when the original contract key is ambiguous such as when fetching
+					// option chains.
+					cm.mutex.Lock()
+					cac := cm.contracts[newKey]
+					cac.details = append(cac.details, r.Contract)
+					cac.pending = doneChan
+					cm.contracts[newKey] = cac
+					cm.mutex.Unlock()
+					addedKeys = append(addedKeys, newKey)
+				}
+
+				newData.details = append(newData.details, r.Contract)
+
+			case *ib.ContractDataEnd:
+				return REPLY_DONE, nil
+
+			case *ib.ErrorMessage:
+				return REPLY_DONE, r.Error()
 			}
 
-			newData.details = append(newData.details, r.Contract)
+			return REPLY_CONTINUE, nil
+		})
 
-		case *ib.ContractDataEnd:
-			return REPLY_DONE, nil
+		newData.pending = nil
+		cm.mutex.Lock()
+		cm.contracts[key] = newData
 
-		case *ib.ErrorMessage:
-			return REPLY_DONE, r.Error()
+		for _, added := range addedKeys {
+			// Remove the pending channel from all the other keys that we added too, if any.
+			cac := cm.contracts[added]
+			cac.pending = nil
+			cm.contracts[added] = cac
 		}
 
-		return REPLY_CONTINUE, nil
-	})
+		close(doneChan)
+		cm.mutex.Unlock()
 
-	newData.pending = nil
-	cm.mutex.Lock()
-	cm.contracts[key] = newData
-
-	for _, added := range addedKeys {
-		// Remove the pending channel from all the other keys that we added too, if any.
-		cac := cm.contracts[added]
-		cac.pending = nil
-		cm.contracts[added] = cac
-	}
-
-	close(doneChan)
-	cm.mutex.Unlock()
-
-	if err != nil {
-		cm.engine.Logger.Error("error while fetching contract", "key", key, "err", err.Error())
-	}
+		if err != nil {
+			cm.engine.Logger.Error("error while fetching contract", "key", key, "err", err.Error())
+		}
+	}()
 
 	return doneChan
 }
