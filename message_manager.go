@@ -78,17 +78,17 @@ func (p *IB) handleReply(rep ib.Reply) {
 	case *ib.ErrorMessage:
 		id := r.ID()
 
-		if r.SeverityWarning() {
-			p.Logger.Warn("info", "err", r)
-		} else {
-			p.Logger.Error("received error", "err", r)
-		}
-
 		// TODO Some errors are not actually replies to the
 		// request, and should be handled here instead of passed
 		// through.
 
-		if id != -1 {
+		if id == -1 {
+			if r.SeverityWarning() {
+				p.Logger.Warn("info", "err", r)
+			} else {
+				p.Logger.Error("received error", "err", r)
+			}
+		} else {
 			p.handleMatchedReply(r)
 			// Make sure the request gets closed, since nothing else is coming in.
 			p.closeMatchedRequest(id)
