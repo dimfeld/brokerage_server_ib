@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/dimfeld/ib"
 	"github.com/inconshreveable/log15"
 	jsoniter "github.com/json-iterator/go"
@@ -15,7 +17,10 @@ import (
 	"github.com/dimfeld/brokerage_server/types"
 )
 
-const DEFAULT_GATEWAY = "localhost:7497"
+const (
+	DEFAULT_GATEWAY      = "localhost:7497"
+	MAX_SENDS_PER_SECOND = 50
+)
 
 type IB struct {
 	engine        *ib.Engine
@@ -25,6 +30,7 @@ type IB struct {
 	nextOrderIdValue int64
 
 	contractManager *contractManager
+	rateLimiter     *rate.Limiter
 
 	doneChan    chan struct{}
 	connectChan chan error
@@ -70,7 +76,7 @@ func (p *IB) connect() (err error) {
 		return err
 	}
 
-	p.contractManager = newContractManager(p.engine)
+	p.contractManager = newContractManager(p)
 
 	p.LogDebugVerbose("Created engine")
 
@@ -176,5 +182,6 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 		activeMutex:   &sync.Mutex{},
 		Logger:        logger.New("plugin", "ib"),
 		Timeout:       time.Duration(timeout) * time.Millisecond,
+		rateLimiter:   rate.NewLimiter(MAX_SENDS_PER_SECOND, MAX_SENDS_PER_SECOND),
 	}, nil
 }

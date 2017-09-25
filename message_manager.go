@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync/atomic"
+	"time"
 
 	"github.com/dimfeld/brokerage_server/types"
 	"github.com/dimfeld/ib"
@@ -16,6 +17,11 @@ type activeReply struct {
 	dataChan chan ib.Reply
 	ctx      context.Context
 }
+
+var (
+	// This should never happen since we don't burst messages.
+	ErrWayTooFast = errors.New("Could not send message at this rate")
+)
 
 const (
 	REPLY_CONTINUE replyBehavior = iota
@@ -91,6 +97,16 @@ func (p *IB) nextOrderID() int64 {
 }
 
 func (p *IB) send(r ib.Request) error {
+	res := p.rateLimiter.Reserve()
+	if !res.OK() {
+		// This should never happen since we don't burst messages.
+		return ErrWayTooFast
+	}
+
+	if waitTime := res.Delay(); waitTime > 0 {
+		time.Sleep(waitTime)
+	}
+
 	p.LogDebugTrace("Sending", "msg", r)
 	err := p.engine.Send(r)
 	if err == io.EOF {
