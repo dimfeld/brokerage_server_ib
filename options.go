@@ -23,8 +23,9 @@ func (p *IB) GetOptions(ctx context.Context, underlying string) (interface{}, er
 	request := &ib.RequestSecDefOptParams{
 		Symbol:     contract.Symbol,
 		SecType:    contract.SecurityType,
-		Exchange:   "SMART",
 		ContractId: contract.ContractID,
+		// No exchange, since the options trade on a different exchange than the underlying.
+		Exchange: "",
 	}
 
 	var output []*ib.SecurityDefinitionOptionParameter

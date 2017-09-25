@@ -12,7 +12,13 @@ import (
 func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
 	const quoteFieldCount = 12
 
-	key := ContractKey{Symbol: symbol, SecurityType: "STK"}
+	// We don't get the "end" message for 11 seconds which is way too long in the case
+	// where IB doesn't give us all the data. 3 seconds is more than enough time to get
+	// the data in my experience, while still seeming somewhat responsive.
+	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(3)*time.Second)
+	defer cancelFunc()
+
+	key := ContractKey{Symbol: symbol}
 	details, err := p.contractManager.GetContractDetails(ctx, key)
 	if err != nil {
 		return nil, err
@@ -25,7 +31,7 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 			Symbol:       contract.Symbol,
 			Currency:     contract.Currency,
 			SecurityType: contract.SecurityType,
-			Exchange:     "SMART",
+			Exchange:     contract.Exchange,
 		},
 		Snapshot: true,
 	}
@@ -142,5 +148,11 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 		return REPLY_CONTINUE, nil
 	})
 
+	if err == context.DeadlineExceeded {
+		// Ignore the deadline exceeded error, and just return whatever we have but mark
+		// the quote as incomplete.
+		output.Incomplete = true
+		err = nil
+	}
 	return output, err
 }
