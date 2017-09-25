@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/dimfeld/brokerage_server/types"
 	"github.com/dimfeld/ib"
 )
 
@@ -14,51 +13,51 @@ var ErrContractNotFound = errors.New("Contract not found or is ambiguous")
 type ContractKey struct {
 	Symbol       string
 	SecurityType string
-	Expiry       string
-	Multiplier   string
-	Strike       float64
-	PutOrCall    types.PutOrCall
+	// Expiry       string
+	// Multiplier   string
+	// Strike       float64
+	// PutOrCall    types.PutOrCall
 }
 
 func (ck ContractKey) ToContract() ib.Contract {
-	var right string
-	if ck.SecurityType == "OPT" {
-		if ck.PutOrCall == types.Put {
-			right = "P"
-		} else {
-			right = "C"
-		}
-	}
+	// var right string
+	// if ck.SecurityType == "OPT" {
+	// 	if ck.PutOrCall == types.Put {
+	// 		right = "P"
+	// 	} else {
+	// 		right = "C"
+	// 	}
+	// }
 
 	return ib.Contract{
 		Symbol: ck.Symbol,
 		// Would be nice to be able to always say SMART, but a few indexes like SPX don't appear there.
 		// Exchange:     "SMART",
 		SecurityType: ck.SecurityType,
-		Expiry:       ck.Expiry,
-		Multiplier:   ck.Multiplier,
-		Strike:       ck.Strike,
-		Right:        right,
-		Currency:     "USD", // TODO Hardcoding this probably breaks non-US securities.
+		// Expiry:       ck.Expiry,
+		// Multiplier:   ck.Multiplier,
+		// Strike:       ck.Strike,
+		// Right:        right,
+		Currency: "USD", // TODO Hardcoding this probably breaks non-US securities.
 	}
 }
 
 func NewContractKey(c *ib.Contract) ContractKey {
-	var pc types.PutOrCall
-	if c.SecurityType == "OPT" {
-		if c.Right == "P" || c.Right == "PUT" {
-			pc = types.Put
-		} else {
-			pc = types.Call
-		}
-	}
+	// var pc types.PutOrCall
+	// if c.SecurityType == "OPT" {
+	// 	if c.Right == "P" || c.Right == "PUT" {
+	// 		pc = types.Put
+	// 	} else {
+	// 		pc = types.Call
+	// 	}
+	// }
 	return ContractKey{
 		Symbol:       c.Symbol,
 		SecurityType: c.SecurityType,
-		Expiry:       c.Expiry,
-		Multiplier:   c.Multiplier,
-		Strike:       c.Strike,
-		PutOrCall:    pc,
+		// Expiry:       c.Expiry,
+		// Multiplier:   c.Multiplier,
+		// Strike:       c.Strike,
+		// PutOrCall:    pc,
 	}
 }
 
@@ -126,7 +125,7 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 
 		var thisDetails []ib.ContractDetails
 
-		err := cm.engine.syncMatchedRequest(ctx, &request, func(mr ib.Reply) (replyBehavior, error) {
+		_, err := cm.engine.syncMatchedRequest(ctx, &request, func(mr ib.Reply) (replyBehavior, error) {
 			switch r := mr.(type) {
 			case *ib.ContractData:
 				newKey := NewContractKey(&r.Contract.Summary)

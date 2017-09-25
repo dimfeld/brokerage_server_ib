@@ -3,20 +3,17 @@ package brokerage_server_ib
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/dimfeld/brokerage_server/types"
 	"github.com/dimfeld/ib"
 )
 
-func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
-	const quoteFieldCount = 12
+var histDataTypes []ib.HistDataToShow = []ib.HistDataToShow{ib.HistBid, ib.HistAsk, ib.HistTrades, ib.HistVolatility, ib.HistOptionIV}
 
-	// We don't get the "end" message for 11 seconds which is way too long in the case
-	// where IB doesn't give us all the data. 3 seconds is more than enough time to get
-	// the data in my experience, while still seeming somewhat responsive.
-	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(3)*time.Second)
-	defer cancelFunc()
+func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
+	const quoteFieldCount = 18
 
 	key := ContractKey{Symbol: symbol}
 	details, err := p.contractManager.GetContractDetails(ctx, key)
@@ -27,13 +24,11 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 	contract := &details[0].Summary
 
 	req := &ib.RequestMarketData{
-		Contract: ib.Contract{
-			Symbol:       contract.Symbol,
-			Currency:     contract.Currency,
-			SecurityType: contract.SecurityType,
-			Exchange:     contract.Exchange,
-		},
-		Snapshot: true,
+		Contract: *contract,
+		// Option Volume, Open Interest, HV, IV, Mark Price
+		GenericTickList: "100,101,104,106,221",
+		// Generic ticks only work if you request it as streaming data.
+		Snapshot: false,
 	}
 
 	output := &types.Quote{
@@ -41,18 +36,52 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 	}
 	seen := map[int64]bool{}
 
-	err = p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
-		switch tick := r.(type) {
-		// case *ib.TickGeneric:
-		// 	usedValue := true
-		// 	switch tick.Type {
-		// 	default:
-		// 		usedValue = false
-		// 	}
+	histWg := sync.WaitGroup{}
+	histDataItems := make([]*ib.HistoricalData, len(histDataTypes))
+	histDataErrors := make([]error, len(histDataTypes))
+	histWg.Add(len(histDataTypes))
 
-		// 	if usedValue {
-		// 		seen[tick.Type] = true
-		// 	}
+	// We don't get the "end" message for 11 seconds which is way too long in the case
+	// where IB doesn't give us all the data. 3 seconds is more than enough time to get
+	// the data in my experience, while still seeming somewhat responsive.
+	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(3)*time.Second)
+	defer cancelFunc()
+
+	// Get a single bar for each historical data item. We do this because the IB
+	// streaming data isn't always reliable.
+	// TODO Maybe only do this outside of RTH?
+	for i, histType := range histDataTypes {
+		go func(i int, histType ib.HistDataToShow) {
+			defer histWg.Done()
+			req := ib.RequestHistoricalData{
+				Contract:    *contract,
+				EndDateTime: time.Now(),
+				Duration:    "60 S",
+				BarSize:     ib.HistBarSize1Min,
+				WhatToShow:  histType,
+				UseRTH:      true,
+			}
+
+			histDataItems[i], histDataErrors[i] = p.historicalData(ctx, &req)
+		}(i, histType)
+	}
+
+	reqId, err := p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
+		switch tick := r.(type) {
+		case *ib.TickGeneric:
+			usedValue := true
+			switch tick.Type {
+			case ib.TickOptionImpliedVol:
+				output.OptionImpliedVolatility = tick.Value
+			case ib.TickOptionHistoricalVol:
+				output.OptionHistoricalVolatility = tick.Value
+			default:
+				usedValue = false
+			}
+
+			if usedValue {
+				seen[tick.Type] = true
+			}
 
 		case *ib.TickPrice:
 			usedValue := true
@@ -69,8 +98,8 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 				output.Last = tick.Price
 				output.LastSize = tick.Size
 				seen[ib.TickLastSize] = true
-			// case ib.TickMarkPrice:
-			// 	output.Mark = tick.Price
+			case ib.TickMarkPrice:
+				output.Mark = tick.Price
 			case ib.TickHigh:
 				output.High = tick.Price
 			case ib.TickLow:
@@ -98,6 +127,14 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 				output.LastSize = tick.Size
 			case ib.TickVolume:
 				output.Volume = tick.Size * 100
+			case ib.TickOptionCallOpenInt:
+				output.OptionCallOpenInt = tick.Size
+			case ib.TickOptionPutOpenInt:
+				output.OptionPutOpenInt = tick.Size
+			case ib.TickOptionCallVolume:
+				output.OptionCallVolume = tick.Size
+			case ib.TickOptionPutVolume:
+				output.OptionPutVolume = tick.Size
 			default:
 				usedValue = false
 			}
@@ -147,6 +184,60 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 
 		return REPLY_CONTINUE, nil
 	})
+
+	// Make sure to cancel the stream once we're all done.
+	cancelReq := ib.CancelMarketData{}
+	cancelReq.SetID(reqId)
+	p.sendUnmatchedRequest(&cancelReq)
+
+	histWg.Wait()
+
+	// Fill in any items that we didn't get from streaming data.
+	for i := range histDataItems {
+		if histDataErrors[i] != nil {
+			p.Logger.Error("Historical data error",
+				"type", histDataTypes[i],
+				"error", histDataErrors[i].Error())
+			continue
+		}
+
+		items := histDataItems[i].Data
+		if len(items) == 0 {
+			continue
+		}
+
+		item := &items[0]
+
+		if item.Close >= 99999 {
+			continue
+		}
+
+		switch histDataTypes[i] {
+		case ib.HistAsk:
+			if output.Ask <= 0 || output.Ask >= 99999 {
+				output.Ask = item.Close
+			}
+		case ib.HistBid:
+			if output.Bid <= 0 || output.Bid >= 99999 {
+				output.Bid = item.Close
+			}
+		case ib.HistTrades:
+			if output.Mark <= 0 || output.Mark >= 99999 {
+				output.Mark = item.Close
+			}
+
+		case ib.HistVolatility:
+			if output.OptionHistoricalVolatility <= 0 || output.OptionHistoricalVolatility >= 99999 {
+				output.OptionHistoricalVolatility = item.Close
+			}
+
+		case ib.HistOptionIV:
+			if output.OptionImpliedVolatility <= 0 || output.OptionImpliedVolatility >= 99999 {
+				output.OptionImpliedVolatility = item.Close
+			}
+		}
+
+	}
 
 	if err == context.DeadlineExceeded {
 		// Ignore the deadline exceeded error, and just return whatever we have but mark

@@ -113,6 +113,7 @@ func (p *IB) send(r ib.Request) error {
 	}
 
 	if waitTime := res.Delay(); waitTime > 0 {
+		p.LogDebugVerbose("Rate limit", "delay", waitTime, "req", r)
 		time.Sleep(waitTime)
 	}
 
@@ -204,7 +205,7 @@ func (p *IB) sendUnmatchedRequest(r ib.Request) error {
 	return p.send(r)
 }
 
-func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFunc) error {
+func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb callbackFunc) (reqId int64, err error) {
 	ctx, cancelFunc := context.WithCancel(ctx)
 	reqId, dataChan, err := p.sendMatchedRequest(ctx, r)
 
@@ -214,7 +215,7 @@ func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb cal
 	}()
 
 	if err != nil {
-		return err
+		return reqId, err
 	}
 
 	for {
@@ -222,15 +223,15 @@ func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb cal
 		case data := <-dataChan:
 			if data == nil {
 				// TODO Better error handling
-				return errors.New("error occurred")
+				return reqId, errors.New("error occurred")
 			}
 
 			behavior, err := cb(data)
 			if err != nil || behavior == REPLY_DONE {
-				return err
+				return reqId, err
 			}
 		case <-ctx.Done():
-			return ctx.Err()
+			return reqId, ctx.Err()
 		}
 	}
 }

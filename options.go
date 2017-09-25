@@ -3,6 +3,7 @@ package brokerage_server_ib
 import (
 	"context"
 	"sort"
+	"sync"
 
 	"github.com/dimfeld/brokerage_server/types"
 	"github.com/dimfeld/ib"
@@ -34,7 +35,7 @@ func (p *IB) GetOptionsChain(ctx context.Context, underlying string) (types.Opti
 	exchanges := []string{}
 	var multiplier string
 
-	err = p.syncMatchedRequest(ctx, request, func(r ib.Reply) (replyBehavior, error) {
+	_, err = p.syncMatchedRequest(ctx, request, func(r ib.Reply) (replyBehavior, error) {
 		switch data := r.(type) {
 		case *ib.SecurityDefinitionOptionParameter:
 
@@ -83,4 +84,55 @@ func (p *IB) GetOptionsChain(ctx context.Context, underlying string) (types.Opti
 	}
 
 	return output, err
+}
+
+func (p *IB) GetOptionsQuotes(ctx context.Context, params types.OptionsQuoteParams) ([]types.OptionQuote, error) {
+
+	details, err := p.contractManager.GetContractDetails(ctx, ContractKey{Symbol: params.Underlying})
+	if err != nil {
+		return nil, err
+	}
+
+	numNeeded := len(params.Expirations) * len(params.Strikes)
+	if params.Puts && params.Calls {
+		numNeeded *= 2
+	}
+
+	if !params.Puts && !params.Calls {
+		params.Puts = true
+		params.Calls = true
+	}
+
+	contracts := make([]ib.Contract, 0, numNeeded)
+
+	detail := &details[0].Summary
+	contract := ib.Contract{
+		Symbol:       detail.Symbol,
+		SecurityType: "OPT",
+	}
+
+	for _, expiration := range params.Expirations {
+		contract.Expiry = expiration
+
+		for _, strike := range params.Strikes {
+			contract.Strike = strike
+
+			if params.Puts {
+				contract.Right = "P"
+				contracts = append(contracts, contract)
+			}
+
+			if params.Calls {
+				contract.Right = "C"
+				contracts = append(contracts, contract)
+			}
+		}
+	}
+
+	output := make([]types.OptionQuote, len(contracts))
+	wg := &sync.WaitGroup{}
+	wg.Add(len(contracts))
+
+	return output, nil
+
 }
