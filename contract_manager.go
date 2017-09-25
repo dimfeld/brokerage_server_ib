@@ -32,12 +32,13 @@ func (ck ContractKey) ToContract() ib.Contract {
 
 	return ib.Contract{
 		Symbol:       ck.Symbol,
+		Exchange:     "SMART", // TODO Is there any time when SMART isn't acceptable here?
 		SecurityType: ck.SecurityType,
 		Expiry:       ck.Expiry,
 		Multiplier:   ck.Multiplier,
 		Strike:       ck.Strike,
 		Right:        right,
-		Currency:     "USD",
+		Currency:     "USD", // TODO Hardcoding this probably breaks non-US securities.
 	}
 }
 
@@ -84,6 +85,7 @@ func newContractManager(p *IB) *contractManager {
 }
 
 func (cm *contractManager) fetchContractDetails(ctx context.Context, key ContractKey) chan struct{} {
+	cm.engine.LogDebugNormal("Fetching contract details", "key", key)
 	request := ib.RequestContractData{
 		Contract: key.ToContract(),
 	}
@@ -111,10 +113,19 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 	var addedKeys []ContractKey
 
 	go func() {
+		seenContractIds := map[int64]bool{}
 		err := cm.engine.syncMatchedRequest(ctx, &request, func(mr ib.Reply) (replyBehavior, error) {
 			switch r := mr.(type) {
 			case *ib.ContractData:
 				newKey := NewContractKey(&r.Contract.Summary)
+
+				conID := r.Contract.Summary.ContractID
+				if seenContractIds[conID] {
+					// Don't include contract IDs we've already seen. This generally occurs when
+					// we get multiple pieces of data identical except for the exchange.
+					break
+				}
+				seenContractIds[conID] = true
 
 				if newKey != key {
 					// The two keys are different, so add the data at the original key as well.
@@ -126,6 +137,7 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 					cac.pending = doneChan
 					cm.contracts[newKey] = cac
 					cm.mutex.Unlock()
+					cm.engine.LogDebugVerbose("Adding additional contract details", "key", newKey, "data", r.Contract)
 					addedKeys = append(addedKeys, newKey)
 				}
 
@@ -141,8 +153,8 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 			return REPLY_CONTINUE, nil
 		})
 
-		newData.pending = nil
 		cm.mutex.Lock()
+		newData.pending = nil
 		cm.contracts[key] = newData
 
 		for _, added := range addedKeys {
@@ -155,8 +167,10 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 		close(doneChan)
 		cm.mutex.Unlock()
 
+		cm.engine.LogDebugVerbose("Finished retrieving contract details", "key", key, "data", newData.details)
+
 		if err != nil {
-			cm.engine.Logger.Error("error while fetching contract", "key", key, "err", err.Error())
+			cm.engine.Logger.Error("fetchContractDetails error", "key", key, "err", err.Error())
 		}
 	}()
 
@@ -164,6 +178,8 @@ func (cm *contractManager) fetchContractDetails(ctx context.Context, key Contrac
 }
 
 func (cm *contractManager) GetContractDetails(ctx context.Context, key ContractKey) ([]ib.ContractDetails, error) {
+	cm.engine.LogDebugVerbose("GetContractDetails", "key", key)
+
 	cm.mutex.RLock()
 	cac := cm.contracts[key]
 	cm.mutex.RUnlock()
@@ -171,6 +187,7 @@ func (cm *contractManager) GetContractDetails(ctx context.Context, key ContractK
 	if cac.details == nil {
 		if cac.pending != nil {
 			// There's already an outstanding fetch, so just wait
+			cm.engine.LogDebugVerbose("Waiting for existing request", "key", key)
 			<-cac.pending
 		} else {
 			// Start the fetch. This returns the channel to wait on so we don't have to check the
@@ -181,9 +198,13 @@ func (cm *contractManager) GetContractDetails(ctx context.Context, key ContractK
 		cm.mutex.RLock()
 		cac = cm.contracts[key]
 		cm.mutex.RUnlock()
+		cm.engine.LogDebugTrace("GetContractDetails done", "key", key, "data", cac.details)
+	} else {
+		cm.engine.LogDebugTrace("Data from cache", "key", key, "data", cac.details)
 	}
 
 	if len(cac.details) == 0 {
+		cm.engine.LogDebugNormal("No contract details found", "key", key)
 		return nil, ErrContractNotFound
 	}
 

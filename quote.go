@@ -12,11 +12,19 @@ import (
 func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
 	const quoteFieldCount = 12
 
+	key := ContractKey{Symbol: symbol, SecurityType: "STK"}
+	details, err := p.contractManager.GetContractDetails(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+
+	contract := &details[0].Summary
+
 	req := &ib.RequestMarketData{
 		Contract: ib.Contract{
-			Symbol:       symbol,
-			Currency:     "USD",
-			SecurityType: "STK",
+			Symbol:       contract.Symbol,
+			Currency:     contract.Currency,
+			SecurityType: contract.SecurityType,
 			Exchange:     "SMART",
 		},
 		Snapshot: true,
@@ -27,7 +35,7 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 	}
 	seen := map[int64]bool{}
 
-	err := p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
+	err = p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
 		switch tick := r.(type) {
 		// case *ib.TickGeneric:
 		// 	usedValue := true

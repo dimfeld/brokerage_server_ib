@@ -9,15 +9,26 @@ import (
 
 func (p *IB) GetOptions(ctx context.Context, underlying string) (interface{}, error) {
 
+	key := ContractKey{
+		Symbol: underlying,
+	}
+	contractDetails, err := p.contractManager.GetContractDetails(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+
+	p.LogDebugNormal("Got contract details", "data", contractDetails)
+
+	contract := contractDetails[0].Summary
 	request := &ib.RequestSecDefOptParams{
-		Symbol:     underlying,
-		SecType:    "STK",
+		Symbol:     contract.Symbol,
+		SecType:    contract.SecurityType,
 		Exchange:   "SMART",
-		ContractId: 416904,
+		ContractId: contract.ContractID,
 	}
 
 	var output []*ib.SecurityDefinitionOptionParameter
-	err := p.syncMatchedRequest(ctx, request, func(r ib.Reply) (replyBehavior, error) {
+	err = p.syncMatchedRequest(ctx, request, func(r ib.Reply) (replyBehavior, error) {
 		switch data := r.(type) {
 		case *ib.SecurityDefinitionOptionParameter:
 			output = append(output, data)

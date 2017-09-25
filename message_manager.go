@@ -3,9 +3,12 @@ package brokerage_server_ib
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync/atomic"
 	"time"
+
+	"github.com/inconshreveable/log15"
 
 	"github.com/dimfeld/brokerage_server/types"
 	"github.com/dimfeld/ib"
@@ -40,7 +43,10 @@ func (p *IB) handleMatchedReply(r ib.MatchedReply) {
 	if !ok {
 		// Got an unexpected reply
 		// This will actually be a fairly normal occurrence so don't warn on it.
-		p.LogDebugVerbose("Unexpected reply", "msg", r)
+		prettyPrint := func() string {
+			return fmt.Sprintf("%T:%+v", r, r)
+		}
+		p.LogDebugVerbose("Unexpected reply", "msg", log15.Lazy{prettyPrint})
 		return
 	}
 
@@ -51,7 +57,10 @@ func (p *IB) handleMatchedReply(r ib.MatchedReply) {
 }
 
 func (p *IB) handleReply(rep ib.Reply) {
-	p.LogDebugTrace("received", "msg", rep)
+	prettyPrint := func() string {
+		return fmt.Sprintf("%T:%+v", rep, rep)
+	}
+	p.LogDebugTrace("received", "msg", log15.Lazy{prettyPrint})
 
 	switch r := rep.(type) {
 	case *ib.ManagedAccounts:
@@ -107,7 +116,10 @@ func (p *IB) send(r ib.Request) error {
 		time.Sleep(waitTime)
 	}
 
-	p.LogDebugTrace("Sending", "msg", r)
+	prettyPrint := func() string {
+		return fmt.Sprintf("%T:%+v", r, r)
+	}
+	p.LogDebugTrace("Sending", "msg", log15.Lazy{prettyPrint})
 	err := p.engine.Send(r)
 	if err == io.EOF {
 		err = types.ErrDisconnected
