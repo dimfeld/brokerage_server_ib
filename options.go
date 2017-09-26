@@ -3,6 +3,7 @@ package brokerage_server_ib
 import (
 	"context"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -125,29 +126,21 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 
 		req := &ib.RequestMarketData{
 			Contract:        *contract,
-			GenericTickList: "100,101",
+			GenericTickList: "101",
 			Snapshot:        false,
 		}
 
 		optionTicks := make([]*ib.TickOptionComputation, 4)
 
 		seen := map[int64]bool{}
-		const needed = 6
+		const needed = 7
 
-		var reqId int64
-		reqId, mktDataErr = p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
+		reqId, err := p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
 			switch data := r.(type) {
 			case *ib.TickGeneric:
 				countSeen := true
 				switch data.Type {
-				case ib.TickOptionCallOpenInt:
-					output.OpenInterest = int64(data.Value)
-				case ib.TickOptionPutOpenInt:
-					output.OpenInterest = int64(data.Value)
-				case ib.TickOptionCallVolume:
-					output.Volume = int64(data.Value)
-				case ib.TickOptionPutVolume:
-					output.Volume = int64(data.Value)
+
 				default:
 					countSeen = false
 				}
@@ -174,9 +167,15 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 					optionTicks[3] = data
 				}
 			case *ib.TickSize:
-				switch data.Type {
-				case ib.TickVolume:
-
+				if data.Size > 0 {
+					switch data.Type {
+					case ib.TickOptionCallOpenInt:
+						output.OpenInterest = data.Size
+					case ib.TickOptionPutOpenInt:
+						output.OpenInterest = data.Size
+					case ib.TickVolume:
+						output.Volume = data.Size
+					}
 				}
 			case *ib.TickPrice:
 				countSeen := true
@@ -201,6 +200,27 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 					seen[data.Type] = true
 				}
 
+			case *ib.TickString:
+				usedValue := true
+				switch data.Type {
+				// case ib.TickAskExch:
+				// 	output.AskExch = tick.Value
+				// case ib.TickBidExch:
+				// 	output.BidExch = tick.Value
+				// case ib.TickLastExchange:
+				// 	output.LastExch = tick.Value
+				case ib.TickLastTimestamp:
+					if t, err := strconv.ParseInt(data.Value, 10, 64); err == nil {
+						output.LastTime = time.Unix(int64(t), 0)
+					}
+				default:
+					usedValue = false
+				}
+
+				if usedValue {
+					seen[data.Type] = true
+				}
+
 			case *ib.TickSnapshotEnd:
 				output.Incomplete = true
 				return REPLY_DONE, nil
@@ -213,6 +233,10 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 			}
 			return REPLY_CONTINUE, nil
 		})
+
+		if err == nil && err != context.DeadlineExceeded {
+			mktDataErr = err
+		}
 
 		// Make sure to cancel the stream once we're all done.
 		cancelReq := ib.CancelMarketData{}
@@ -256,6 +280,17 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 	go getContractDetails()
 	// TODO probably dont need to fetch historical data during trading hours. I think?
 	// go getHistData()
+
+	output.Underlying = contract.Symbol
+	output.Strike = contract.Strike
+	output.Expiration = contract.Expiry
+	output.Time = time.Now()
+	if contract.Right[0] == 'P' {
+		output.Type = types.Put
+	} else {
+		output.Type = types.Call
+	}
+
 	wg.Wait()
 
 	if contractErr != nil {
@@ -266,17 +301,8 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 		// 	return output, histErr
 	}
 
-	output.Underlying = contract.Symbol
 	output.MinPriceDelta = contractDetails.MinTick
 	output.FullSymbol = contractDetails.Summary.LocalSymbol
-	output.Strike = contract.Strike
-	output.Expiration = contract.Expiry
-	output.Time = time.Now()
-	if contract.Right[0] == 'P' {
-		output.Type = types.Put
-	} else {
-		output.Type = types.Call
-	}
 
 	// for i, data := range histData {
 	// 	if data == nil {
