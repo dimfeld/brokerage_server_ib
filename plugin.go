@@ -32,6 +32,9 @@ type IB struct {
 	contractManager *contractManager
 	rateLimiter     *rate.Limiter
 
+	optionMetaCacheMutex *sync.Mutex
+	optionMetaCache      map[string]*types.OptionChain
+
 	doneChan    chan struct{}
 	connectChan chan error
 
@@ -183,5 +186,8 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 		Logger:        logger.New("plugin", "ib"),
 		Timeout:       time.Duration(timeout) * time.Millisecond,
 		rateLimiter:   rate.NewLimiter(MAX_SENDS_PER_SECOND, MAX_SENDS_PER_SECOND),
+
+		optionMetaCache:      map[string]*types.OptionChain{},
+		optionMetaCacheMutex: &sync.Mutex{},
 	}, nil
 }

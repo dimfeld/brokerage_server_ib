@@ -10,7 +10,9 @@ import (
 	"github.com/dimfeld/ib"
 )
 
-var histDataTypes []ib.HistDataToShow = []ib.HistDataToShow{ib.HistBid, ib.HistAsk, ib.HistTrades, ib.HistVolatility, ib.HistOptionIV}
+var (
+	equityHistDataTypes = []ib.HistDataToShow{ib.HistBid, ib.HistAsk, ib.HistTrades, ib.HistVolatility, ib.HistOptionIV}
+)
 
 func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, error) {
 	const quoteFieldCount = 18
@@ -36,35 +38,23 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 	}
 	seen := map[int64]bool{}
 
-	histWg := sync.WaitGroup{}
-	histDataItems := make([]*ib.HistoricalData, len(histDataTypes))
-	histDataErrors := make([]error, len(histDataTypes))
-	histWg.Add(len(histDataTypes))
-
 	// We don't get the "end" message for 11 seconds which is way too long in the case
 	// where IB doesn't give us all the data. 3 seconds is more than enough time to get
-	// the data in my experience, while still seeming somewhat responsive.
+	// the data in my experience, while still seeming somewhat responsive. The historical
+	// data will fill in the rest.
+	// TODO timer should be configurable.
 	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(3)*time.Second)
 	defer cancelFunc()
 
-	// Get a single bar for each historical data item. We do this because the IB
-	// streaming data isn't always reliable.
-	// TODO Maybe only do this outside of RTH?
-	for i, histType := range histDataTypes {
-		go func(i int, histType ib.HistDataToShow) {
-			defer histWg.Done()
-			req := ib.RequestHistoricalData{
-				Contract:    *contract,
-				EndDateTime: time.Now(),
-				Duration:    "60 S",
-				BarSize:     ib.HistBarSize1Min,
-				WhatToShow:  histType,
-				UseRTH:      true,
-			}
-
-			histDataItems[i], histDataErrors[i] = p.historicalData(ctx, &req)
-		}(i, histType)
-	}
+	// TODO probably dont need to fetch historical data during trading hours. I think?
+	var histDataItems []*ib.HistoricalData
+	var histDataErr error
+	var histDataWg sync.WaitGroup
+	histDataWg.Add(1)
+	go func() {
+		histDataItems, histDataErr = p.getLatestHistData(ctx, contract, equityHistDataTypes)
+		histDataWg.Done()
+	}()
 
 	reqId, err := p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
 		switch tick := r.(type) {
@@ -190,18 +180,15 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 	cancelReq.SetID(reqId)
 	p.sendUnmatchedRequest(&cancelReq)
 
-	histWg.Wait()
+	histDataWg.Wait()
 
 	// Fill in any items that we didn't get from streaming data.
-	for i := range histDataItems {
-		if histDataErrors[i] != nil {
-			p.Logger.Error("Historical data error",
-				"type", histDataTypes[i],
-				"error", histDataErrors[i].Error())
+	for i, data := range histDataItems {
+		if data == nil {
 			continue
 		}
 
-		items := histDataItems[i].Data
+		items := data.Data
 		if len(items) == 0 {
 			continue
 		}
@@ -212,7 +199,7 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 			continue
 		}
 
-		switch histDataTypes[i] {
+		switch equityHistDataTypes[i] {
 		case ib.HistAsk:
 			if output.Ask <= 0 || output.Ask >= 99999 {
 				output.Ask = item.Close
@@ -222,8 +209,8 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 				output.Bid = item.Close
 			}
 		case ib.HistTrades:
-			if output.Mark <= 0 || output.Mark >= 99999 {
-				output.Mark = item.Close
+			if output.Last <= 0 || output.Last >= 99999 {
+				output.Last = item.Close
 			}
 
 		case ib.HistVolatility:
