@@ -124,20 +124,42 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 		defer cancelFunc()
 
 		req := &ib.RequestMarketData{
-			Contract: *contract,
-			Snapshot: true,
+			Contract:        *contract,
+			GenericTickList: "100,101",
+			Snapshot:        false,
 		}
 
 		optionTicks := make([]*ib.TickOptionComputation, 4)
 
 		seen := map[int64]bool{}
-		const needed = 4
+		const needed = 6
 
-		_, mktDataErr = p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
+		var reqId int64
+		reqId, mktDataErr = p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
 			switch data := r.(type) {
+			case *ib.TickGeneric:
+				countSeen := true
+				switch data.Type {
+				case ib.TickOptionCallOpenInt:
+					output.OpenInterest = int64(data.Value)
+				case ib.TickOptionPutOpenInt:
+					output.OpenInterest = int64(data.Value)
+				case ib.TickOptionCallVolume:
+					output.Volume = int64(data.Value)
+				case ib.TickOptionPutVolume:
+					output.Volume = int64(data.Value)
+				default:
+					countSeen = false
+				}
+
+				if countSeen {
+					seen[data.Type] = true
+				}
+
 			case *ib.TickOptionComputation:
 				// Save the ticks in an array. These are ordered with the best first.
-				// The only one that we really want/need is the model computation.
+				// The only one that we really want/need is the model computation
+				// but the others will do if the model doesn't arrive in a timely manner.
 				switch data.Type {
 
 				case ib.TickModelOption:
@@ -151,6 +173,11 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 				case ib.TickAskOptionComputation:
 					optionTicks[3] = data
 				}
+			case *ib.TickSize:
+				switch data.Type {
+				case ib.TickVolume:
+
+				}
 			case *ib.TickPrice:
 				countSeen := true
 				switch data.Type {
@@ -159,7 +186,7 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 					output.BidSize = data.Size
 				case ib.TickAsk:
 					output.Ask = data.Price
-					output.BidSize = data.Size
+					output.AskSize = data.Size
 				case ib.TickClose:
 					output.Close = data.Price
 				case ib.TickLast:
@@ -175,6 +202,7 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 				}
 
 			case *ib.TickSnapshotEnd:
+				output.Incomplete = true
 				return REPLY_DONE, nil
 			case *ib.ErrorMessage:
 				return REPLY_DONE, data.Error()
@@ -185,6 +213,11 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 			}
 			return REPLY_CONTINUE, nil
 		})
+
+		// Make sure to cancel the stream once we're all done.
+		cancelReq := ib.CancelMarketData{}
+		cancelReq.SetID(reqId)
+		p.sendUnmatchedRequest(&cancelReq)
 
 		// Assign common data from the ticks we received. They are already in priority order.
 		for _, data := range optionTicks {
@@ -238,6 +271,7 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 	output.FullSymbol = contractDetails.Summary.LocalSymbol
 	output.Strike = contract.Strike
 	output.Expiration = contract.Expiry
+	output.Time = time.Now()
 	if contract.Right[0] == 'P' {
 		output.Type = types.Put
 	} else {
