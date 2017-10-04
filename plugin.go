@@ -20,6 +20,7 @@ import (
 const (
 	DEFAULT_GATEWAY      = "localhost:7497"
 	MAX_SENDS_PER_SECOND = 50
+	BrokerName           = "ib"
 )
 
 type IB struct {
@@ -40,6 +41,11 @@ type IB struct {
 
 	active      map[int64]activeReply
 	activeMutex *sync.Mutex
+
+	accountData      map[string]types.Account
+	accountDataMutex *sync.Mutex
+
+	Accounts []string
 
 	// Debug logging level
 	Debug   types.DebugLevel
@@ -70,6 +76,8 @@ func (p *IB) SetDebugLevel(level types.DebugLevel) {
 }
 
 func (p *IB) connect() (err error) {
+	p.closeAllRequests()
+
 	p.LogDebugNormal("Connecting")
 	if p.engine, err = ib.NewEngine(p.engineOptions); err != nil {
 		p.engine = nil
@@ -108,6 +116,10 @@ func (p *IB) sendInitialSetup() error {
 		return err
 	}
 
+	if err := p.accountDataLoop(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -121,8 +133,18 @@ func (p *IB) Connect() (err error) {
 	return p.connect()
 }
 
+func (p *IB) closeAllRequests() {
+	p.activeMutex.Lock()
+	for id := range p.active {
+		p.closeMatchedRequestWithoutMutex(id)
+	}
+	p.activeMutex.Unlock()
+}
+
 func (p *IB) Close() error {
 	p.open = false
+
+	p.closeAllRequests()
 
 	if p.engine != nil {
 		p.engine.Stop()
@@ -186,6 +208,9 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 		Logger:        logger.New("plugin", "ib"),
 		Timeout:       time.Duration(timeout) * time.Millisecond,
 		rateLimiter:   rate.NewLimiter(MAX_SENDS_PER_SECOND, MAX_SENDS_PER_SECOND),
+
+		accountData:      map[string]types.Account{},
+		accountDataMutex: &sync.Mutex{},
 
 		optionMetaCache:      map[string]*types.OptionChain{},
 		optionMetaCacheMutex: &sync.Mutex{},
