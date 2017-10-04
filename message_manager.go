@@ -23,7 +23,8 @@ type activeReply struct {
 
 var (
 	// This should never happen since we don't burst messages.
-	ErrWayTooFast = errors.New("Could not send message at this rate")
+	ErrWayTooFast       = errors.New("Could not send message at this rate")
+	ErrConnectionClosed = errors.New("broker connection closed")
 )
 
 const (
@@ -64,7 +65,7 @@ func (p *IB) handleReply(rep ib.Reply) {
 
 	switch r := rep.(type) {
 	case *ib.ManagedAccounts:
-		// TODO Save list of accounts
+		p.Accounts = r.AccountsList
 
 	case *ib.NextValidID:
 		p.LogDebugTrace("NextValidID", "id", r.OrderID)
@@ -152,8 +153,8 @@ func (p *IB) sendMatchedRequest(ctx context.Context, r ib.MatchedRequest) (nextI
 	return
 }
 
-func (p *IB) closeMatchedRequest(id int64) {
-	p.activeMutex.Lock()
+// The mutex MUST be acquired before calling this function!
+func (p *IB) closeMatchedRequestWithoutMutex(id int64) {
 	rep, ok := p.active[id]
 	if ok {
 	outer:
@@ -167,21 +168,28 @@ func (p *IB) closeMatchedRequest(id int64) {
 		}
 
 		delete(p.active, id)
+		if rep.dataChan != nil {
+			close(rep.dataChan)
+		}
 	}
+}
+
+func (p *IB) closeMatchedRequest(id int64) {
+	p.activeMutex.Lock()
+	p.closeMatchedRequestWithoutMutex(id)
 	p.activeMutex.Unlock()
 }
 
 func (p *IB) startStreamingRequest(ctx context.Context, r ib.MatchedRequest) (reqId int64, repChan chan ib.Reply, err error) {
-	if err = p.send(r); err != nil {
-		return
-	}
-
 	var dataChan chan ib.Reply
 	reqId, dataChan, err = p.sendMatchedRequest(ctx, r)
 	if err != nil {
 		return
 	}
 
+	// Cheap buffering to keep slow reply handling from blocking everything.
+	// Eventually this should move to a system that dynamically appends an item to a
+	// queue when repChan blocks.
 	repChan = make(chan ib.Reply, 20)
 
 	go func() {
@@ -222,8 +230,7 @@ func (p *IB) syncMatchedRequest(ctx context.Context, r ib.MatchedRequest, cb cal
 		select {
 		case data := <-dataChan:
 			if data == nil {
-				// TODO Better error handling
-				return reqId, errors.New("error occurred")
+				return reqId, ErrConnectionClosed
 			}
 
 			behavior, err := cb(data)
