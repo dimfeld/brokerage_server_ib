@@ -108,9 +108,9 @@ func (p *IB) GetOptionsChain(ctx context.Context, underlying string) (types.Opti
 	return *output, err
 }
 
-func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (types.OptionQuote, error) {
+func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (*types.OptionQuote, error) {
 
-	output := types.OptionQuote{
+	output := &types.OptionQuote{
 		Rho: -1, // IB doesn't return Rho
 	}
 
@@ -335,7 +335,7 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (type
 	return output, nil
 }
 
-func (p *IB) GetOptionsQuotes(ctx context.Context, params types.OptionsQuoteParams) ([]types.OptionQuote, error) {
+func (p *IB) GetOptionsQuotes(ctx context.Context, params types.OptionsQuoteParams) ([]*types.OptionQuote, error) {
 
 	p.LogDebugNormal("GetOptionsQuotes", "params", params)
 
@@ -381,7 +381,7 @@ func (p *IB) GetOptionsQuotes(ctx context.Context, params types.OptionsQuotePara
 		}
 	}
 
-	output := make([]types.OptionQuote, len(contracts))
+	output := make([]*types.OptionQuote, len(contracts))
 	errs := make([]error, len(contracts))
 	wg := &sync.WaitGroup{}
 	wg.Add(len(contracts))
