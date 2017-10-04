@@ -62,6 +62,16 @@ func NewContractKey(c *ib.Contract) ContractKey {
 	}
 }
 
+func ContractKeyFromOption(t *types.Option) ContractKey {
+	return ContractKey{
+		Symbol:       t.Underlying,
+		SecurityType: "OPT",
+		Expiry:       t.Expiration,
+		Strike:       t.Strike,
+		PutOrCall:    t.Type,
+	}
+}
+
 type contractAndChannel struct {
 	details []ib.ContractDetails
 	pending chan struct{}
