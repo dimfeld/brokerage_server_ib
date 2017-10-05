@@ -45,6 +45,9 @@ type IB struct {
 	accountData      map[string]types.Account
 	accountDataMutex *sync.Mutex
 
+	portfolioData      map[ib.PortfolioValueKey]*types.Position
+	portfolioDataMutex *sync.RWMutex
+
 	Accounts []string
 
 	// Debug logging level
@@ -113,10 +116,6 @@ func (p *IB) sendInitialSetup() error {
 		MarketDataType: ib.MarketDataTypeFrozen,
 	}
 	if err := p.sendUnmatchedRequest(dataTypeReq); err != nil {
-		return err
-	}
-
-	if err := p.accountDataLoop(); err != nil {
 		return err
 	}
 
@@ -211,6 +210,9 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 
 		accountData:      map[string]types.Account{},
 		accountDataMutex: &sync.Mutex{},
+
+		portfolioData:      map[ib.PortfolioValueKey]*types.Position{},
+		portfolioDataMutex: &sync.RWMutex{},
 
 		optionMetaCache:      map[string]*types.OptionChain{},
 		optionMetaCacheMutex: &sync.Mutex{},

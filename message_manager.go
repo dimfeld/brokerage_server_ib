@@ -66,6 +66,13 @@ func (p *IB) handleReply(rep ib.Reply) {
 	switch r := rep.(type) {
 	case *ib.ManagedAccounts:
 		p.Accounts = r.AccountsList
+		p.startAccountData()
+
+	case *ib.AccountValue:
+		p.handleAccountValue(r)
+
+	case *ib.PortfolioValue:
+		p.handlePortfolioValue(r)
 
 	case *ib.NextValidID:
 		p.LogDebugTrace("NextValidID", "id", r.OrderID)
@@ -98,8 +105,6 @@ func (p *IB) handleReply(rep ib.Reply) {
 	case ib.MatchedReply:
 		p.handleMatchedReply(r)
 	}
-
-	// TODO Handle unmatched replies.
 }
 
 func (p *IB) nextOrderID() int64 {
