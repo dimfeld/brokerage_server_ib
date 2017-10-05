@@ -56,6 +56,9 @@ func (p *IB) oneHistoricalData(ctx context.Context, req *ib.RequestHistoricalDat
 	_, err := p.syncMatchedRequest(ctx, req, func(r ib.Reply) (replyBehavior, error) {
 		switch data := r.(type) {
 		case *ib.ErrorMessage:
+			if data.Code == IBErrNoDataReturned {
+				return REPLY_DONE, nil
+			}
 			return REPLY_DONE, data.Error()
 		case *ib.HistoricalData:
 			output = data
@@ -87,7 +90,7 @@ func (p *IB) GetHistoricalData(ctx context.Context, params types.HistoricalDataP
 
 	}
 
-	if params.Symbol != "" && dataType != ib.HistTrades {
+	if params.Option.Underlying != "" && dataType != ib.HistTrades {
 		return nil, types.ArgError("options historical quotes must be for price data")
 	}
 
@@ -133,6 +136,7 @@ func (p *IB) GetHistoricalData(ctx context.Context, params types.HistoricalDataP
 					Open:   item.Open,
 					Close:  item.Close,
 					Volume: item.Volume,
+					Time:   item.Date,
 				}
 
 				if which == types.HistoricalDataTypeHv {
