@@ -144,7 +144,8 @@ func (p *IB) GetStockQuote(ctx context.Context, symbol string) (*types.Quote, er
 			// 	output.LastExch = tick.Value
 			case ib.TickLastTimestamp:
 				if t, err := strconv.ParseInt(tick.Value, 10, 64); err == nil {
-					output.LastTime = time.Unix(int64(t), 0)
+					tim := time.Unix(int64(t), 0)
+					output.LastTime = &tim
 				}
 			default:
 				usedValue = false
