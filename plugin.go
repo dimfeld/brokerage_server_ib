@@ -48,6 +48,10 @@ type IB struct {
 	portfolioData      map[ib.PortfolioValueKey]*types.Position
 	portfolioDataMutex *sync.RWMutex
 
+	unmChannelTag   int
+	unmChannels     map[int]chan ib.Reply
+	unmChannelMutex *sync.RWMutex
+
 	Accounts []string
 
 	// Debug logging level
@@ -105,6 +109,8 @@ func (p *IB) connect() (err error) {
 	case <-timeout.C:
 		return errors.New("Connection timeout")
 	}
+
+	p.Logger.Info("connected", "client id", p.engine.ClientID())
 
 	return p.sendInitialSetup()
 }
@@ -216,5 +222,9 @@ func New(logger log15.Logger, config json.RawMessage) (*IB, error) {
 
 		optionMetaCache:      map[string]*types.OptionChain{},
 		optionMetaCacheMutex: &sync.Mutex{},
+
+		unmChannelTag:   0,
+		unmChannels:     map[int]chan ib.Reply{},
+		unmChannelMutex: &sync.RWMutex{},
 	}, nil
 }

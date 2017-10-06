@@ -57,6 +57,25 @@ func (p *IB) handleMatchedReply(r ib.MatchedReply) {
 	}
 }
 
+func (p *IB) subscribeUnmatched() (dataChan chan ib.Reply, closeFunc func()) {
+	dataChan = make(chan ib.Reply, 1)
+	p.unmChannelMutex.Lock()
+	p.unmChannelTag += 1
+	chanTag := p.unmChannelTag
+	p.unmChannels[p.unmChannelTag] = dataChan
+	p.unmChannelMutex.Unlock()
+
+	closeFunc = func() {
+		p.unmChannelMutex.Lock()
+		c := p.unmChannels[chanTag]
+		delete(p.unmChannels, chanTag)
+		close(c)
+		p.unmChannelMutex.Unlock()
+	}
+
+	return
+}
+
 func (p *IB) handleReply(rep ib.Reply) {
 	prettyPrint := func() string {
 		return fmt.Sprintf("%T:%+v", rep, rep)
@@ -104,6 +123,13 @@ func (p *IB) handleReply(rep ib.Reply) {
 
 	case ib.MatchedReply:
 		p.handleMatchedReply(r)
+
+	default:
+		p.unmChannelMutex.RLock()
+		for _, c := range p.unmChannels {
+			c <- rep
+		}
+		p.unmChannelMutex.RUnlock()
 	}
 }
 
