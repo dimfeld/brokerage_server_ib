@@ -44,7 +44,7 @@ func (p *IB) GetOptionsChain(ctx context.Context, underlying string) (types.Opti
 		Exchange: "",
 	}
 
-	expirations := map[string]bool{}
+	expirations := map[ExpiryIBFormat]bool{}
 	strikes := map[float64]bool{}
 	exchanges := []string{}
 	var multiplier string
@@ -54,7 +54,7 @@ func (p *IB) GetOptionsChain(ctx context.Context, underlying string) (types.Opti
 		case *ib.SecurityDefinitionOptionParameter:
 
 			for _, value := range data.Expirations {
-				expirations[value] = true
+				expirations[ExpiryIBFormat(value)] = true
 			}
 
 			for _, value := range data.Strikes {
@@ -88,7 +88,7 @@ func (p *IB) GetOptionsChain(ctx context.Context, underlying string) (types.Opti
 
 	expiresList := make([]string, 0, len(expirations))
 	for e := range expirations {
-		expiresList = append(expiresList, e)
+		expiresList = append(expiresList, e.toOCCFormat().String())
 	}
 
 	sort.Strings(expiresList)
@@ -284,7 +284,7 @@ func (p *IB) getOneOptionQuote(ctx context.Context, contract *ib.Contract) (*typ
 
 	output.Underlying = contract.Symbol
 	output.Strike = contract.Strike
-	output.Expiration = contract.Expiry
+	output.Expiration = ExpiryIBFormat(contract.Expiry).toOCCFormat().String()
 	output.Time = time.Now()
 	if contract.Right[0] == 'P' {
 		output.Type = types.Put

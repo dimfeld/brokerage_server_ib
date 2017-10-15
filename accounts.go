@@ -69,7 +69,7 @@ func (p *IB) handlePortfolioValue(v *ib.PortfolioValue) {
 		Symbol:     v.Contract.Symbol,
 		Strike:     v.Contract.Strike,
 		Multiplier: v.Contract.Multiplier,
-		Expiration: v.Contract.Expiry,
+		Expiration: ExpiryIBFormat(v.Contract.Expiry).toOCCFormat().String(),
 		PutOrCall:  optionType,
 
 		Position:      int(v.Position),

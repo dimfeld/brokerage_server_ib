@@ -70,7 +70,7 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 					e.OptionType = "CALL"
 				}
 				e.Strike = con.Strike
-				e.Expiration = con.Expiry
+				e.Expiration = ExpiryIBFormat(con.Expiry).toOCCFormat().String()
 				e.Multiplier = con.Multiplier
 			}
 

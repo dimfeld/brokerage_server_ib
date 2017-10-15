@@ -11,10 +11,41 @@ import (
 
 var ErrContractNotFound = errors.New("Contract not found or is ambiguous")
 
+// Types with conversion functions to ensure that we don't mix up the different formats.
+type ExpiryIBFormat string
+type ExpiryOCCFormat string
+
+func (s ExpiryIBFormat) toOCCFormat() ExpiryOCCFormat {
+	if len(s) == 8 && s[0:2] == "20" {
+		s = s[2:8]
+	}
+	return ExpiryOCCFormat(s)
+}
+
+func (s ExpiryIBFormat) toIBFormat() string {
+	return string(s)
+}
+
+func (s ExpiryIBFormat) String() string {
+	return string(s)
+}
+
+func (s ExpiryOCCFormat) toIBFormat() ExpiryIBFormat {
+	return ExpiryIBFormat("20" + s)
+}
+
+func (s ExpiryOCCFormat) toOCCFormat() string {
+	return string(s)
+}
+
+func (s ExpiryOCCFormat) String() string {
+	return string(s)
+}
+
 type ContractKey struct {
 	Symbol       string
 	SecurityType string
-	Expiry       string
+	Expiry       ExpiryIBFormat
 	Multiplier   string
 	Strike       float64
 	PutOrCall    types.PutOrCall
@@ -35,7 +66,7 @@ func (ck ContractKey) ToContract() ib.Contract {
 		// Would be nice to be able to always say SMART, but a few indexes like SPX don't appear there.
 		// Exchange:     "SMART",
 		SecurityType: ck.SecurityType,
-		Expiry:       ck.Expiry,
+		Expiry:       ck.Expiry.toIBFormat(),
 		Multiplier:   ck.Multiplier,
 		Strike:       ck.Strike,
 		Right:        right,
@@ -55,7 +86,7 @@ func NewContractKey(c *ib.Contract) ContractKey {
 	return ContractKey{
 		Symbol:       c.Symbol,
 		SecurityType: c.SecurityType,
-		Expiry:       c.Expiry,
+		Expiry:       ExpiryIBFormat(c.Expiry),
 		Multiplier:   c.Multiplier,
 		Strike:       c.Strike,
 		PutOrCall:    pc,
@@ -66,7 +97,7 @@ func ContractKeyFromOption(t *types.Option) ContractKey {
 	return ContractKey{
 		Symbol:       t.Underlying,
 		SecurityType: "OPT",
-		Expiry:       t.Expiration,
+		Expiry:       ExpiryOCCFormat(t.Expiration).toIBFormat(),
 		Strike:       t.Strike,
 		PutOrCall:    t.Type,
 	}
