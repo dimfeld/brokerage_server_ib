@@ -365,7 +365,7 @@ func (p *IB) GetOptionsQuotes(ctx context.Context, params types.OptionsQuotePara
 	}
 
 	for _, expiration := range params.Expirations {
-		contract.Expiry = expiration
+		contract.Expiry = ExpiryOCCFormat(expiration).toIBFormat().String()
 
 		for _, strike := range params.Strikes {
 			contract.Strike = strike
