@@ -60,14 +60,16 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 
 			con := &data.Contract
 			if con.SecurityType == "BAG" || con.SecurityType == "STK" {
-				p.LogDebugNormal("bag trade", "data", data.Exec)
 				cq := int(data.Exec.CumQty)
 				if cq > t.size {
 					t.size = cq
 				}
 
 				t.price += data.Exec.Price * float64(data.Exec.Shares)
-				break
+				if con.SecurityType == "BAG" {
+					p.LogDebugNormal("bag trade", "data", data.Exec)
+					break
+				}
 			}
 
 			e := &types.Execution{
