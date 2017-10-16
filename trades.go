@@ -11,6 +11,12 @@ import (
 )
 
 func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade, error) {
+	type tradeData struct {
+		output types.Trade
+		size   int
+		price  float64
+	}
+
 	req := &ib.RequestExecutions{}
 	if !startTime.IsZero() {
 		req.Filter = ib.ExecutionFilter{
@@ -18,7 +24,7 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 		}
 	}
 
-	trades := map[int64]*types.Trade{}
+	trades := map[int64]*tradeData{}
 	commissions := map[string]*ib.CommissionReport{}
 
 	// Commissions reports come in as unmatched for some reason, so subscribe
@@ -37,21 +43,30 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 		case *ib.ExecutionData:
 			t := trades[data.Exec.PermID]
 			if t == nil {
-				t = &types.Trade{
-					Symbol:  data.Contract.Symbol,
-					Time:    data.Exec.Time,
-					Account: data.Exec.AccountCode,
-					Broker:  BrokerName,
-					OrderId: strconv.FormatInt(data.Exec.PermID, 10),
-					RawData: data.Contract,
+				t = &tradeData{
+					output: types.Trade{
+						Symbol:  data.Contract.Symbol,
+						Time:    data.Exec.Time,
+						Account: data.Exec.AccountCode,
+						Broker:  BrokerName,
+						OrderId: strconv.FormatInt(data.Exec.PermID, 10),
+						RawData: data.Contract,
+					},
+					size:  0,
+					price: 0,
 				}
 				trades[data.Exec.PermID] = t
 			}
 
 			con := &data.Contract
 			if con.SecurityType == "BAG" {
-				// The BAG container execution isn't relevant to anything we need
-				// since the component legs come in separately.
+				p.LogDebugNormal("bag trade", "data", data.Exec)
+				cq := int(data.Exec.CumQty)
+				if cq > t.size {
+					t.size = cq
+				}
+
+				t.price += data.Exec.Price
 				break
 			}
 
@@ -61,7 +76,6 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 				Side:        data.Exec.Side,
 				Size:        int(data.Exec.Shares),
 				Price:       data.Exec.Price,
-				AvgPrice:    data.Exec.AveragePrice,
 			}
 			if con.SecurityType == "OPT" {
 				if con.Right == "P" || con.Right == "PUT" {
@@ -71,18 +85,19 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 				}
 				e.Strike = con.Strike
 				e.Expiration = ExpiryIBFormat(con.Expiry).toOCCFormat().String()
-				e.Multiplier = con.Multiplier
+				if multiplier, err := strconv.Atoi(con.Multiplier); err == nil {
+					e.Multiplier = multiplier
+				}
 			}
 
 			e.Exchange = con.Exchange
 			e.Side = data.Exec.Side
 			e.Size = int(data.Exec.Shares)
 			e.Price = data.Exec.Price
-			e.AvgPrice = data.Exec.AveragePrice
 			e.Time = data.Exec.Time
 			e.RawData = data.Exec
 
-			t.Executions = append(t.Executions, e)
+			t.output.Executions = append(t.output.Executions, e)
 
 		case *ib.ExecutionDataEnd:
 			return REPLY_DONE, nil
@@ -103,7 +118,7 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 
 	for _, v := range trades {
 		// Fill in the commissions for each execution.
-		for _, e := range v.Executions {
+		for _, e := range v.output.Executions {
 			comm := commissions[e.ExecutionId]
 			if comm != nil {
 				e.Commissions = comm.Commission
@@ -114,7 +129,9 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 				}
 			}
 		}
-		out = append(out, v)
+		v.output.Price = v.price / float64(v.size)
+		v.output.Size = v.size
+		out = append(out, &v.output)
 	}
 
 	return out, nil
