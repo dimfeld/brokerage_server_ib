@@ -15,6 +15,7 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 		output types.Trade
 		size   int
 		price  float64
+		side   string
 	}
 
 	req := &ib.RequestExecutions{}
@@ -50,7 +51,6 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 						Account: data.Exec.AccountCode,
 						Broker:  BrokerName,
 						OrderId: strconv.FormatInt(data.Exec.PermID, 10),
-						RawData: data.Contract,
 					},
 					size:  0,
 					price: 0,
@@ -63,21 +63,27 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 				cq := int(data.Exec.CumQty)
 				if cq > t.size {
 					t.size = cq
+					t.side = data.Exec.Side
 				}
 
 				t.price += data.Exec.Price * float64(data.Exec.Shares)
 				if con.SecurityType == "BAG" {
+					t.output.RawData = &data.Exec
 					p.LogDebugNormal("bag trade", "data", data.Exec)
 					break
 				}
 			}
 
+			size := int(data.Exec.Shares)
+			if data.Exec.Side == "SLD" {
+				size *= -1
+			}
 			e := &types.Execution{
 				ExecutionId: data.Exec.ExecID,
 				Exchange:    con.Exchange,
-				Side:        data.Exec.Side,
-				Size:        int(data.Exec.Shares),
+				Size:        size,
 				Price:       data.Exec.Price,
+				Time:        data.Exec.Time,
 			}
 			if con.SecurityType == "OPT" {
 				if con.Right == "P" || con.Right == "PUT" {
@@ -92,11 +98,6 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 				}
 			}
 
-			e.Exchange = con.Exchange
-			e.Side = data.Exec.Side
-			e.Size = int(data.Exec.Shares)
-			e.Price = data.Exec.Price
-			e.Time = data.Exec.Time
 			e.RawData = data.Exec
 
 			t.output.Executions = append(t.output.Executions, e)
@@ -133,6 +134,9 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 		}
 		v.output.Price = v.price / float64(v.size)
 		v.output.Size = v.size
+		if v.side == "SLD" {
+			v.output.Size *= -1
+		}
 		out = append(out, &v.output)
 	}
 
