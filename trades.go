@@ -16,6 +16,7 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 		size   int
 		price  float64
 		side   string
+		sawBag bool
 	}
 
 	req := &ib.RequestExecutions{}
@@ -60,6 +61,7 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 
 			con := &data.Contract
 			if con.SecurityType == "BAG" || con.SecurityType == "STK" {
+				t.sawBag = true
 				cq := int(data.Exec.CumQty)
 				if cq > t.size {
 					t.size = cq
@@ -72,6 +74,14 @@ func (p *IB) GetTrades(ctx context.Context, startTime time.Time) ([]*types.Trade
 					p.LogDebugNormal("bag trade", "data", data.Exec)
 					break
 				}
+			} else if !t.sawBag {
+				// No BAG execution for this one, so pull the data out of the actual legs. We can assume that all executions are of the same security.
+				cq := int(data.Exec.CumQty)
+				if cq > t.size {
+					t.size = cq
+					t.side = data.Exec.Side
+				}
+				t.price += data.Exec.Price * float64(data.Exec.Shares)
 			}
 
 			size := int(data.Exec.Shares)
